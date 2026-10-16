@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gpuglance"
+version = "0.1.0"
+description = "See a Slurm cluster's GPUs at a glance: web dashboard + terminal summary"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = []  # stdlib only, so it runs with any Python on any login node
+
+[project.scripts]
+gpuglance = "gpuglance.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+gpuglance = ["static/*"]
