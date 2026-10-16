@@ -20,6 +20,7 @@ const st = {
 };
 
 // ------------------------------------------------------------------ utils
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const now = () => Date.now() / 1000 + st.offset;
 const fmt = (n) => n.toLocaleString();
@@ -248,6 +249,7 @@ function renderMap() {
       return `<div class="node ${n.health}" data-node="${n.name}">
         ${flags ? `<span class="flags">${flags}</span>` : ""}
         <div class="slots${n.gpus > 8 ? " small" : ""}" style="grid-template-columns:repeat(${cols},auto)">${slots}</div>
+        <span class="cpubar"><i style="width:${n.cpus ? Math.min(100, (n.cpus_alloc / n.cpus) * 100).toFixed(1) : 0}%"></i></span>
         <span class="nname">${esc(n.name)}</span></div>`;
     }).join("");
     return `<div class="mgroup"><div class="glab"><b>${esc(m.label)}</b><span>${x.free} free · ${x.total} GPUs</span></div>
@@ -257,7 +259,8 @@ function renderMap() {
   $("#mapNote").innerHTML = `<span style="display:inline-flex;gap:14px">
     <span><i class="flag planned" style="display:inline-block;vertical-align:-1px;border-color:var(--page)"></i> scheduler holding for a queued job</span>
     <span><i class="flag resv" style="display:inline-block;vertical-align:-1px;border-color:var(--page)"></i> reservation</span>
-    <span><i class="flag bad" style="display:inline-block;vertical-align:-1px;border-color:var(--page)"></i> drain / down</span></span>`;
+    <span><i class="flag bad" style="display:inline-block;vertical-align:-1px;border-color:var(--page)"></i> drain / down</span>
+    <span><span class="cpubar" style="display:inline-block;width:26px;vertical-align:1px"><i style="width:65%"></i></span> CPUs allocated</span></span>`;
 }
 
 // ------------------------------------------------------------------ release chart
@@ -431,6 +434,7 @@ function jobTip(j) {
   }
   lines.push(row("CPU / mem", `${j.cpus} · ${esc(j.mem || "–")}`));
   lines.push(row("Account", `${esc(j.account)} · ${esc(j.qos)}`));
+  if (j.mine) lines.push(`<hr><div class="tm">Click for details: usage, processes, log</div>`);
   return lines.join("");
 }
 
@@ -527,7 +531,6 @@ $("#tabs").addEventListener("click", (e) => {
 $("#showBlocked").addEventListener("change", (e) => { st.showBlocked = e.target.checked; renderJobs(); });
 $("#jobs").addEventListener("click", (e) => { if (e.target.id === "more") { st.showAll = true; renderJobs(); } });
 
-const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 const savedTheme = store.get("gpuglance-theme");
 if (savedTheme) document.documentElement.dataset.theme = savedTheme;
 $("#theme").addEventListener("click", () => {

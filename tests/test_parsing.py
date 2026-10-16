@@ -70,6 +70,21 @@ def test_build_slots():
     assert s["jobs"][0]["mine"] and s["jobs"][1]["id"] == "8_[0-3]"
 
 
+def test_jobinfo_parsers():
+    from gpuglance.jobinfo import JOB_ID_RE, clean_log, parse_bytes, parse_duration, parse_tres
+
+    assert parse_duration("1-02:03:04") == 93784
+    assert parse_duration("25:08") == 1508
+    assert abs(parse_duration("00:03.500") - 3.5) < 1e-9
+    assert parse_bytes("23217484K") == 23217484 * 1024 and parse_bytes("2G") == 2 * 1024 ** 3
+    assert parse_tres("cpu=00:25:08,fs/disk=37,mem=18G") == {"cpu": "00:25:08", "fs/disk": "37", "mem": "18G"}
+    assert clean_log(b"step 1\rstep 2\rstep 3\r\nok \x1b[32mgreen\x1b[0m\n") == ["step 3", "ok green", ""]
+    for good in ("1114856", "123_4", "123_[0-7%4]"):
+        assert JOB_ID_RE.match(good)
+    for bad in ("1;rm -rf", "../etc", "", "12 3"):
+        assert not JOB_ID_RE.match(bad)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

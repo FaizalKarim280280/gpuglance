@@ -8,8 +8,13 @@ nothing changed and sends the full snapshot only when there is a new one.
 
 from __future__ import annotations
 
+import getpass
 import gzip
+import hmac
 import json
+import os
+import re
+import secrets
 import mimetypes
 import threading
 import time
@@ -19,9 +24,32 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from typing import Any, Dict, List, Optional
 
-from . import slurm, snapshot
+from . import jobinfo, slurm, snapshot
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+TOKEN_FILE = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "gpuglance" / "token"
+JOB_ROUTE = re.compile(r"^/api/job/([0-9_\[\],%:-]+)(/live)?$")
+
+
+def load_token() -> str:
+    """Secret for the job-detail endpoints (they read your logs and scripts).
+
+    Any user on a shared login node can connect to localhost:<port>, so these
+    endpoints need this token; it lives in a file only you can read and is
+    reused across restarts, so a bookmarked link keeps working.
+    """
+    try:
+        tok = TOKEN_FILE.read_text().strip()
+        if len(tok) >= 20:
+            return tok
+    except OSError:
+        pass
+    tok = secrets.token_urlsafe(24)
+    TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(TOKEN_FILE), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(tok + "\n")
+    return tok
 
 
 IDLE_AFTER = 120  # stop querying Slurm this many seconds after the last page request
@@ -80,7 +108,22 @@ class SnapshotCache:
             return {"body": self._body, "version": self._version, "error": self._error}
 
 
-def make_handler(cache: SnapshotCache):
+def make_handler(cache: SnapshotCache, token: str, user: str):
+    live_cache: Dict[str, Any] = {}  # job id -> (time, result): repeated clicks within 5 s reuse one probe
+    live_lock = threading.Lock()
+
+    def job_api(job_id: str, live: bool) -> Dict[str, Any]:
+        if not live:
+            return jobinfo.details(job_id, user)
+        with live_lock:
+            hit = live_cache.get(job_id)
+            if hit and time.time() - hit[0] < 5:
+                return hit[1]
+        res = jobinfo.live(job_id, user)
+        with live_lock:
+            live_cache[job_id] = (time.time(), res)
+        return res
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "gpuglance"
 
@@ -102,6 +145,18 @@ def make_handler(cache: SnapshotCache):
 
         def do_GET(self) -> None:
             path = self.path.split("?", 1)[0]
+            m = JOB_ROUTE.match(path)
+            if m:
+                sent = self.headers.get("X-Gpuglance-Token") or ""
+                if not hmac.compare_digest(sent.encode(), token.encode()):
+                    msg = json.dumps({"error": "token", "detail": "open the link with ?token=... printed by `gpuglance serve`"})
+                    return self._send(401, msg.encode(), "application/json")
+                try:
+                    res = job_api(m.group(1), bool(m.group(2)))
+                except jobinfo.JobAccessError as e:
+                    return self._send(404, json.dumps({"error": str(e)}).encode(), "application/json")
+                body = gzip.compress(json.dumps(res, separators=(",", ":")).encode(), compresslevel=5)
+                return self._send(200, body, "application/json", gz=True)
             if path == "/api/snapshot":
                 res = cache.get()
                 since = parse_qs(urlsplit(self.path).query).get("v", [""])[0]
@@ -132,10 +187,12 @@ def make_handler(cache: SnapshotCache):
 def serve(host: str, port: int, interval: float, partitions: Optional[List[str]] = None,
           raw_dir: Optional[str] = None, port_tries: int = 20) -> None:
     cache = SnapshotCache(interval, partitions, raw_dir)
+    token = load_token()
+    user = os.environ.get("USER") or getpass.getuser()
     httpd = None
     for p in range(port, port + port_tries):
         try:
-            httpd = ThreadingHTTPServer((host, p), make_handler(cache))
+            httpd = ThreadingHTTPServer((host, p), make_handler(cache, token, user))
             break
         except OSError:
             continue
@@ -143,10 +200,14 @@ def serve(host: str, port: int, interval: float, partitions: Optional[List[str]]
         raise SystemExit(f"no free port in {port}-{port + port_tries - 1}")
     p = httpd.server_address[1]
     import socket
-    print(f"gpuglance on http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{p}  (node {socket.gethostname()})")
-    print("  VS Code Remote forwards the port automatically (Ports tab).")
-    print(f"  From a laptop terminal:  ssh -L {p}:localhost:{p} <cluster-login>  then open http://localhost:{p}")
-    print("  Ctrl-C to stop.")
+    url = f"http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{p}/?token={token}"
+    if p != port:
+        print(f"  port {port} is taken on this node, using {p}", flush=True)
+    print(f"gpuglance on {url}", flush=True)
+    print(f"  node {socket.gethostname()} · open the link above (the token unlocks details of your own jobs)", flush=True)
+    print("  VS Code Remote forwards the port automatically: Ctrl/Cmd-click the link.", flush=True)
+    print(f"  From a laptop terminal:  ssh -L {p}:localhost:{p} <login-address>, then open the link.", flush=True)
+    print("  Ctrl-C to stop.", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
