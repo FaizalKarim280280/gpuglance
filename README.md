@@ -6,6 +6,10 @@ busy ones will free up. There is a web dashboard and a terminal summary.
 It reads the same information `squeue` and `scontrol` give every user, and needs no setup: GPU partitions are found
 automatically. It uses only the Python standard library, so any Python 3.8+ works, including the cluster's system `python3`.
 
+![gpuglance dashboard: free GPUs, your jobs, one card per GPU type, and a node map with one square per GPU](docs/dashboard.png)
+
+<sub>Screenshot from real cluster load, with user names, job names and accounts replaced.</sub>
+
 ## Install
 
 On the cluster (login node or any compute node):
@@ -118,6 +122,8 @@ Things to know:
 ### Job details panel
 
 Clicking one of your jobs opens a panel with:
+
+![Job details panel: time left, CPU / RAM / disk usage, GPU utilization, running processes and the log tail](docs/job-panel.png)
 
 - **Time:** time left, end time, and how much of the time limit is used.
 - **Resources:** CPU cores actually busy (average since the start) vs allocated, peak and average RAM vs allocated,
